@@ -419,25 +419,29 @@ function flipTarot(){$('tarot-card').classList.toggle('flipped')}
 function drawTarot(e){if(e)e.stopPropagation();currentTarot=Math.floor(Math.random()*tarot.length);setTarot();$('tarot-card').classList.remove('flipped');setTimeout(()=>{$('tarot-card').classList.add('flipped');sparkles(10)},250)}
 setTarot();
 
-
 const profileIcons=['🌙','🖤','🌹','🦇','🐈‍⬛','🪻','🕯️','🧸','🧙‍♀️','✨','🎀','🪽'];
 const profileMoods=['soft witch ♡','gothic night 🖤','pink magic ✨','cozy rain 🌧️','moon child 🌙','chaotic fairy 🦇'];
 function renderProfile(){
- const p=state.profile;$('profile-name').value=p.name;$('profile-bio').value=p.bio;$('profile-avatar').textContent=p.icon;
+ const p=state.profile;$('profile-name').value=p.name||'Valorie';$('profile-bio').value=p.bio||'';$('profile-avatar').textContent=p.icon||'🌙';
  updateProfileStats();
 }
 async function saveProfile(){
- state.profile.name=$('profile-name').value.trim()||'Valorie';state.profile.bio=$('profile-bio').value.trim()||'A little witch making a soft place to exist.';persist();renderProfile();toast('Your profile is safe here ♡');
+ state.profile.name=$('profile-name').value.trim()||'Valorie';
+ state.profile.bio=$('profile-bio').value.trim()||'A little witch making a soft place to exist.';
+ persist();
+ renderProfile();
+ toast('Your profile is safe here ♡');
  if(window.valorieSyncProfile) await window.valorieSyncProfile();
 }
 function initProfile(){
  const ib=$('profile-icon-options'),mb=$('profile-mood-options');
- profileIcons.forEach(icon=>{const b=document.createElement('button');b.className='goth-btn rounded-xl border border-pinkgoth-border bg-goth-dark/70 p-2 text-xl';b.textContent=icon;b.onclick=()=>{state.profile.icon=icon;persist();renderProfile()};ib.appendChild(b)});
- profileMoods.forEach(m=>{const b=document.createElement('button');b.className='goth-btn rounded-xl border border-pinkgoth-border bg-goth-dark/70 p-2 text-[10px]';b.textContent=m;b.onclick=()=>{state.profile.mood=m;persist()};mb.appendChild(b)});
+ if(ib) ib.innerHTML=''; if(mb) mb.innerHTML='';
+ profileIcons.forEach(icon=>{const b=document.createElement('button');b.className='goth-btn rounded-xl border border-pinkgoth-border bg-goth-dark/70 p-2 text-xl';b.textContent=icon;b.onclick=()=>{state.profile.icon=icon;persist();renderProfile()};if(ib)ib.appendChild(b)});
+ profileMoods.forEach(m=>{const b=document.createElement('button');b.className='goth-btn rounded-xl border border-pinkgoth-border bg-goth-dark/70 p-2 text-[10px]';b.textContent=m;b.onclick=()=>{state.profile.mood=m;persist()};if(mb)mb.appendChild(b)});
  renderProfile();
 }
 function updateProfileStats(){
- if($('profile-friends-count')){$('profile-friends-count').textContent=friends.length;$('profile-spells-count').textContent=state.spells.length}
+ if($('profile-friends-count')){$('profile-friends-count').textContent=window.friendsCount || 0;$('profile-spells-count').textContent=state.spells.length}
 }
 
 function renderSpells(){
@@ -448,114 +452,123 @@ function renderSpells(){
 function saveSpell(){
  const title=$('spell-title').value.trim()||'Untitled spell',text=$('spell-text').value;
  if(!text.trim()){toast('Write something first, little witch ♡');return}
- state.spells.unshift({title,text,time:Date.now()});persist();renderSpells();updateProfileStats();initProfile();$('save-state').textContent='Saved just now ♡';toast('Spellbook page saved');
+ state.spells.unshift({title,text,time:Date.now()});persist();renderSpells();updateProfileStats();$('save-state').textContent='Saved just now ♡';toast('Spellbook page saved');
 }
 function loadSpell(i){const s=state.spells[i];$('spell-title').value=s.title;$('spell-text').value=s.text;$('save-state').textContent='Loaded from your book'}
 function newSpell(){$('spell-title').value='';$('spell-text').value='';$('save-state').textContent='New page';$('spell-title').focus()}
 function deleteSpell(){$('spell-title').value='';$('spell-text').value='';$('save-state').textContent='Page cleared'}
 renderSpells();
+initProfile();
 
-let rainAudio=null, ambientAudio=null;
+let audioCtx=null,rainGain=null,ambientGain=null,rainNoise=null,ambientOsc=null;
 
 function audioSetup(){
-  if(rainAudio) return true;
-  try{
-    rainAudio=new Audio('rain.mp3');
-    rainAudio.loop=true;
-    rainAudio.preload='auto';
-    rainAudio.volume=Number($('rain-volume').value)/100;
-    ambientAudio=null;
-    return true;
-  }catch(err){
-    console.error(err);
-    rainAudio=null;
-    toast('Could not load the rain sound.');
-    return false;
+ if(audioCtx) return true;
+ const AudioCtx=window.AudioContext||window.webkitAudioContext;
+ if(!AudioCtx){toast('Audio is not supported in this browser.');return false}
+ try{
+  audioCtx=new AudioCtx();
+
+  rainGain=audioCtx.createGain();
+  ambientGain=audioCtx.createGain();
+  rainGain.gain.value=0;
+  ambientGain.gain.value=0;
+
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*3,audioCtx.sampleRate);
+  const data=buf.getChannelData(0);
+  for(let i=0;i<data.length;i++){
+    data[i]=(Math.random()*2-1)*0.22;
   }
+  rainNoise=audioCtx.createBufferSource();
+  rainNoise.buffer=buf;
+  rainNoise.loop=true;
+
+  const low=audioCtx.createBiquadFilter();
+  low.type='lowpass'; low.frequency.value=2400; low.Q.value=.35;
+
+  const high=audioCtx.createBiquadFilter();
+  high.type='highpass'; high.frequency.value=180; high.Q.value=.2;
+
+  rainNoise.connect(high).connect(low).connect(rainGain).connect(audioCtx.destination);
+  rainNoise.start();
+
+  ambientOsc=audioCtx.createOscillator();
+  const ambientLevel=audioCtx.createGain();
+  ambientOsc.type='sine'; ambientOsc.frequency.value=110; ambientLevel.gain.value=0;
+  ambientOsc.connect(ambientLevel).connect(ambientGain).connect(audioCtx.destination);
+  ambientOsc.start();
+
+  return true;
+ }catch(err){
+  console.error(err);
+  audioCtx=null;
+  return false;
+ }
 }
 
 async function wakeAudio(){
-  if(!audioSetup()) return false;
-  try{
-    if(state.audio.rain || state.audio.master){
-      rainAudio.volume=Number($('rain-volume').value)/100;
-      await rainAudio.play();
-      if(!state.audio.rain && !state.audio.master){ rainAudio.pause(); }
-    }
-    return true;
-  }catch(err){
-    console.error(err);
-    toast('Tap the sound button again to start 🌧️');
-    return false;
-  }
+ if(!audioSetup()) return false;
+ try{
+  if(audioCtx.state==='suspended') await audioCtx.resume();
+  return audioCtx.state==='running';
+ }catch(err){
+  console.error(err);
+  return false;
+ }
 }
 
 async function toggleSound(type){
-  if(type==='ambient'){
-    state.audio.ambient=!state.audio.ambient;
-    persist();
-    $('ambient-sound-btn').textContent=state.audio.ambient?'ON':'OFF';
-    updateAudioIcon();
-    return;
-  }
-  if(!audioSetup()) return;
-  state.audio.rain=!state.audio.rain;
-  persist();
-  $('rain-sound-btn').textContent=state.audio.rain?'ON':'OFF';
-  if(state.audio.rain){
-    try{
-      rainAudio.volume=Number($('rain-volume').value)/100;
-      await rainAudio.play();
-    }catch(err){
-      state.audio.rain=false; persist(); $('rain-sound-btn').textContent='OFF';
-      toast('Tap Rain ON again to start 🌧️');
-    }
-  }else{
-    rainAudio.pause();
-  }
-  updateAudioIcon();
+ const ready=await wakeAudio();
+ if(!ready){toast('Tap the sound button again 🌧️');return}
+ state.audio[type]=!state.audio[type];
+ persist();
+
+ const vol=Number($(type==='rain'?'rain-volume':'ambient-volume').value)/100;
+ if(type==='rain'){
+  rainGain.gain.setTargetAtTime(state.audio.rain?vol:0,audioCtx.currentTime,.12);
+ }else{
+  ambientGain.gain.setTargetAtTime(state.audio.ambient?vol*.08:0,audioCtx.currentTime,.12);
+ }
+ $(type+'-sound-btn').textContent=state.audio[type]?'ON':'OFF';
+ updateAudioIcon();
 }
 
 async function toggleGlobalAudio(){
-  if(!audioSetup()) return;
-  state.audio.master=!state.audio.master;
-  state.audio.rain=state.audio.master;
-  state.audio.ambient=state.audio.master;
-  persist();
-  ['rain','ambient'].forEach(type=>{
-    $(type+'-sound-btn').textContent=state.audio[type]?'ON':'OFF';
-  });
-  if(state.audio.master){
-    try{
-      rainAudio.volume=Number($('rain-volume').value)/100;
-      await rainAudio.play();
-      toast('Cozy rain on 🌧️');
-    }catch(err){
-      state.audio.master=false; state.audio.rain=false; state.audio.ambient=false; persist();
-      $('rain-sound-btn').textContent='OFF'; $('ambient-sound-btn').textContent='OFF';
-      toast('Tap the sound button again to start 🌧️');
-    }
-  }else{
-    rainAudio.pause();
-    rainAudio.currentTime=0;
-    toast('Cozy sounds off');
-  }
-  updateAudioIcon();
+ const ready=await wakeAudio();
+ if(!ready){toast('Tap the sound button again 🌧️');return}
+
+ state.audio.master=!state.audio.master;
+ state.audio.rain=state.audio.master;
+ state.audio.ambient=state.audio.master;
+ persist();
+
+ ['rain','ambient'].forEach(type=>{
+  $(type+'-sound-btn').textContent=state.audio[type]?'ON':'OFF';
+ });
+
+ const rv=state.audio.master?Number($('rain-volume').value)/100:0;
+ const av=state.audio.master?Number($('ambient-volume').value)/100:0;
+ rainGain.gain.setTargetAtTime(rv,audioCtx.currentTime,.12);
+ ambientGain.gain.setTargetAtTime(av*.08,audioCtx.currentTime,.12);
+
+ updateAudioIcon();
+ toast(state.audio.master?'Cozy sounds on 🌧️':'Cozy sounds off');
 }
 
 function updateAudioIcon(){
-  const anyOn=state.audio.master||state.audio.rain||state.audio.ambient;
-  $('global-audio-icon').className=anyOn?'fa-solid fa-volume-high text-lg':'fa-solid fa-volume-xmark text-lg';
+ const anyOn=state.audio.master||state.audio.rain||state.audio.ambient;
+ $('global-audio-icon').className=anyOn?'fa-solid fa-volume-high text-lg':'fa-solid fa-volume-xmark text-lg';
 }
 
 $('rain-volume').oninput=()=>{
-  if(rainAudio){
-    rainAudio.volume=Number($('rain-volume').value)/100;
-  }
+ if(audioCtx&&audioCtx.state==='running'&&state.audio.rain)
+  rainGain.gain.setTargetAtTime(Number($('rain-volume').value)/100,audioCtx.currentTime,.05);
 };
 
-$('ambient-volume').oninput=()=>{};
-
+$('ambient-volume').oninput=()=>{
+ if(audioCtx&&audioCtx.state==='running'&&state.audio.ambient)
+  ambientGain.gain.setTargetAtTime(Number($('ambient-volume').value)/100*.08,audioCtx.currentTime,.05);
+};
 
 function sparkles(n=6,x=innerWidth/2,y=innerHeight/2){
  for(let i=0;i<n;i++){let s=document.createElement('span');s.className='magic-sparkle';s.style.left=(x+(Math.random()-.5)*80)+'px';s.style.top=(y+(Math.random()-.5)*80)+'px';document.body.appendChild(s);setTimeout(()=>s.remove(),800)}
@@ -569,7 +582,7 @@ updateAudioIcon();
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  onAuthStateChanged, signOut, updateProfile
+  onAuthStateChanged, signOut
 } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
 import {
   getDatabase, ref, set, get, push, onValue, remove, update, serverTimestamp
@@ -589,6 +602,8 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 let me = null, friends = {}, activeFriend = null, unsubscribeMessages = null, unsubscribeRequests = null;
+
+window.friendsCount = 0;
 
 const esc = (s) => {
   const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML;
@@ -625,7 +640,7 @@ async function createAccount(){
   if(!email || password.length<6){setAuthStatus('Use a valid email and a password with at least 6 characters.');return;}
   try{
     setAuthStatus('Creating your account...');
-    const cred=await createUserWithEmailAndPassword(auth,email,password);
+    await createUserWithEmailAndPassword(auth,email,password);
     await saveMyUser();
     badge('♡ connected');
     setAuthStatus('Account created. Welcome home.');
@@ -655,8 +670,9 @@ async function loadFriends(){
   if(!me) return;
   const snap=await get(ref(db,'friends/'+me.uid));
   if(snap.exists()) friends=snap.val()||{};
+  window.friendsCount = Object.keys(friends).length;
   renderFriendList();
-  updateProfileStatsReal();
+  if(window.updateProfileStats) window.updateProfileStats();
 }
 
 function renderFriendList(){
@@ -779,10 +795,6 @@ $('chat-input').addEventListener('keydown',e=>{
 $('friend-email-input').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();addFriendByEmail();}
 });
-
-function updateProfileStatsReal(){
-  if($('profile-friends-count')) $('profile-friends-count').textContent=Object.keys(friends).length;
-}
 
 onAuthStateChanged(auth,async user=>{
   me=user;
